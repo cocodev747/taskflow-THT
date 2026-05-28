@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using Taskflow.Api.Data;
@@ -15,30 +16,44 @@ public class AuthController(ApplicationDbContext db, JwtService jwt) : Controlle
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request)
     {
-        if (await db.Users.AnyAsync(u => u.Email == request.Email))
-        {
-            return Conflict(new { message = "Email is already registered." });
-        }
+        var email = request.Email.Trim().ToLowerInvariant();
+        var password = request.Password.Trim();
 
-        var email = request.Email.Trim();
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.Password))
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
         {
             return BadRequest(new { message = "Email and password are required." });
         }
 
-        if (request.Password.Length < 6)
+        if (!email.Contains('@'))
+        {
+            return BadRequest(new { message = "Please provide a valid email address." });
+        }
+
+        if (password.Length < 6)
         {
             return BadRequest(new { message = "Password must be at least 6 characters." });
+        }
+
+        if (await db.Users.AnyAsync(u => u.Email == email))
+        {
+            return Conflict(new { message = "Email is already registered." });
         }
 
         var user = new User
         {
             Email = email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password)
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(password)
         };
 
-        db.Users.Add(user);
-        await db.SaveChangesAsync();
+        try
+        {
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqliteEx && sqliteEx.SqliteErrorCode == 19)
+        {
+            return Conflict(new { message = "Email is already registered." });
+        }
 
         var token = jwt.GenerateToken(user);
         return Ok(new AuthResponse(token, new UserResponse(user.Id, user.Email)));
@@ -48,9 +63,16 @@ public class AuthController(ApplicationDbContext db, JwtService jwt) : Controlle
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request)
     {
         var email = request.Email.Trim().ToLowerInvariant();
+        var password = request.Password.Trim();
+
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        {
+            return BadRequest(new { message = "Email and password are required." });
+        }
+
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
 
-        if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        if (user is null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
         {
             return Unauthorized(new { message = "Invalid email or password." });
         }
