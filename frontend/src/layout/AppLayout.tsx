@@ -1,12 +1,16 @@
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useToast } from "../ui/Toast";
+import Spinner from "../ui/Spinner";
 
 export default function AppLayout() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
+  const toast = useToast();
 
   function onLogout() {
     logout();
+    toast.ok("Signed out");
     navigate("/login");
   }
 
@@ -18,14 +22,14 @@ export default function AppLayout() {
             Taskflow
           </Link>
           <nav className="flex items-center gap-4 text-sm">
-            {user && (
-              <Link to="/tasks" className="text-slate-700 hover:text-slate-900">
-                Tasks
-              </Link>
-            )}
-            {user ? (
+            {loading ? (
+              <Spinner />
+            ) : user ? (
               <>
-                <span className="text-slate-500">{user.email}</span>
+                <Link to="/tasks" className="text-slate-700 hover:text-slate-900">
+                  Tasks
+                </Link>
+                <span className="hidden text-slate-500 sm:inline">{user.email}</span>
                 <button
                   type="button"
                   onClick={onLogout}

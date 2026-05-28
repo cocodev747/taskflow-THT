@@ -1,41 +1,43 @@
-import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "../auth/AuthContext";
+import { errMsg } from "../lib/apiError";
+import { useToast } from "../ui/Toast";
 
-const loginSchema = z.object({
+const schema = z.object({
   email: z.string().trim().email("Enter a valid email"),
   password: z.string().min(6, "Password must be at least 6 characters")
 });
 
-type LoginForm = z.infer<typeof loginSchema>;
+type FormValues = z.infer<typeof schema>;
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting }
-  } = useForm<LoginForm>({
-    resolver: zodResolver(loginSchema)
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { email: "", password: "" }
   });
 
   if (user) {
     return <Navigate to="/tasks" replace />;
   }
 
-  async function onSubmit(values: LoginForm) {
-    setError(null);
+  async function onSubmit(values: FormValues) {
     try {
       await login(values.email, values.password);
+      toast.ok("Welcome back!");
       navigate("/tasks");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not sign in.");
+      toast.err(errMsg(err, "Could not sign in."));
     }
   }
 
@@ -44,11 +46,12 @@ export default function LoginPage() {
       <h1 className="text-xl font-semibold text-slate-900">Sign in</h1>
       <p className="mt-1 text-sm text-slate-600">Welcome back to Taskflow</p>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-3">
+      <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-3" noValidate>
         <div>
           <input
             type="email"
             placeholder="Email"
+            autoComplete="email"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             {...register("email")}
           />
@@ -59,6 +62,7 @@ export default function LoginPage() {
           <input
             type="password"
             placeholder="Password"
+            autoComplete="current-password"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             {...register("password")}
           />
@@ -82,8 +86,6 @@ export default function LoginPage() {
           Register
         </Link>
       </p>
-
-      {error && <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     </section>
   );
 }
