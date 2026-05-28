@@ -12,8 +12,7 @@ namespace Taskflow.Api.Controllers;
 [Route("api/tasks")]
 public class TasksController(ApplicationDbContext db) : ControllerBase
 {
-    private int CurrentUserId =>
-        int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+    private int CurrentUserId => int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TaskItem>>> GetAll()
@@ -29,10 +28,20 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TaskItem>> Create([FromBody] CreateTaskRequest request)
     {
+        if (request is null)
+        {
+            return BadRequest(new { message = "Request body is required." });
+        }
+
         var title = request.Title.Trim();
         if (string.IsNullOrWhiteSpace(title))
         {
             return BadRequest(new { message = "Title is required." });
+        }
+        
+        if (title.Length > 200)
+        {
+            return BadRequest(new { message = "Title must be 200 characters or fewer." });
         }
 
         var item = new TaskItem
@@ -53,6 +62,11 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<ActionResult<TaskItem>> GetById(int id)
     {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
         var item = await FindOwnedTask(id);
         return item is null ? NotFound() : Ok(item);
     }
@@ -60,6 +74,11 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpPatch("{id:int}")]
     public async Task<ActionResult<TaskItem>> Update(int id, [FromBody] UpdateTaskRequest request)
     {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
         var item = await FindOwnedTask(id);
         if (item is null)
         {
@@ -93,9 +112,40 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
         return Ok(item);
     }
 
+    [HttpPatch("{id:int}/toggle")]
+    public async Task<ActionResult<TaskItem>> ToggleCompletion(int id)
+    {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
+        var item = await FindOwnedTask(id);
+        if (item is null)
+        {
+            return NotFound();
+        }
+
+        // Explicit ownership check kept for review readability.
+        if (item.UserId != CurrentUserId)
+        {
+            return Forbid();
+        }
+
+        item.IsCompleted = !item.IsCompleted;
+        item.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(item);
+    }
+
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
         var item = await FindOwnedTask(id);
         if (item is null)
         {
