@@ -55,3 +55,12 @@ Copy `frontend/.env.example` to `frontend/.env` and adjust if needed:
 - No CQRS
 - No unnecessary abstraction layers
 - CRUD logic lives directly in the controller for speed/readability
+
+## Data Model
+
+- `User`: `Id`, `Email`, `PasswordHash`, `CreatedAt`
+- `TaskItem`: `Id`, `Title`, `Description`, `DueDate`, `IsCompleted`, `CreatedAt`, `UpdatedAt`, `UserId`
+
+`TaskItem` has a required relationship to `User` (`User 1 - many TaskItems`).
+
+If you already ran an older version of the app, delete `backend/taskflow.db` once so the new schema is created cleanly.

@@ -3,8 +3,12 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 type TaskItem = {
   id: number;
   title: string;
-  isDone: boolean;
-  createdAtUtc: string;
+  description?: string | null;
+  dueDate?: string | null;
+  isCompleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+  userId: number;
 };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5068";
@@ -32,7 +36,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const remainingCount = useMemo(() => tasks.filter((task) => !task.isDone).length, [tasks]);
+  const remainingCount = useMemo(() => tasks.filter((task) => !task.isCompleted).length, [tasks]);
 
   async function loadTasks() {
     try {
@@ -58,7 +62,7 @@ export default function App() {
     try {
       const created = await request<TaskItem>("/api/tasks", {
         method: "POST",
-        body: JSON.stringify({ title: newTitle })
+        body: JSON.stringify({ title: newTitle, userId: 1 })
       });
       setTasks((current) => [created, ...current]);
       setNewTitle("");
@@ -71,7 +75,7 @@ export default function App() {
     try {
       const updated = await request<TaskItem>(`/api/tasks/${task.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ isDone: !task.isDone })
+        body: JSON.stringify({ isCompleted: !task.isCompleted })
       });
       setTasks((current) => current.map((item) => (item.id === task.id ? updated : item)));
     } catch (err) {
@@ -129,11 +133,11 @@ export default function App() {
                 <label className="flex cursor-pointer items-center gap-3">
                   <input
                     type="checkbox"
-                    checked={task.isDone}
+                    checked={task.isCompleted}
                     onChange={() => toggleTask(task)}
                     className="h-4 w-4"
                   />
-                  <span className={task.isDone ? "text-slate-400 line-through" : "text-slate-800"}>
+                  <span className={task.isCompleted ? "text-slate-400 line-through" : "text-slate-800"}>
                     {task.title}
                   </span>
                 </label>

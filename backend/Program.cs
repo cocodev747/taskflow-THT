@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using Taskflow.Api.Data;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,7 +11,7 @@ var connectionString =
     ?? Environment.GetEnvironmentVariable("TASKFLOW_CONNECTION_STRING")
     ?? "Data Source=taskflow.db";
 
-builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite(connectionString));
+builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseSqlite(connectionString));
 
 var allowedOriginsRaw =
     builder.Configuration["Cors:AllowedOrigins"]
@@ -32,8 +33,29 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     db.Database.EnsureCreated();
+
+    // if local DB schema is stale, recreate it.
+    try
+    {
+        _ = db.Users.Any();
+    }
+    catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("no such table"))
+    {
+        db.Database.EnsureDeleted();
+        db.Database.EnsureCreated();
+    }
+
+    if (!db.Users.Any())
+    {
+        db.Users.Add(new()
+        {
+            Email = "demo@taskflow.local",
+            PasswordHash = "dev-only-placeholder-hash"
+        });
+        db.SaveChanges();
+    }
 }
 
 app.UseCors("frontend");
