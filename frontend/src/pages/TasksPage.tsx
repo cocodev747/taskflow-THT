@@ -3,177 +3,233 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Task } from "../api/types";
 
-type Filter = "all" | "active" | "completed";
+type Tab = "all" | "active" | "completed";
+type Status = "completed" | "overdue" | "due-today" | "active";
 
-type TaskInput = {
+type TaskForm = {
   title: string;
   description: string;
   dueDate: string;
 };
 
-const emptyForm: TaskInput = { title: "", description: "", dueDate: "" };
+const blank: TaskForm = { title: "", description: "", dueDate: "" };
 
 export default function TasksPage() {
-  const queryClient = useQueryClient();
+  const qc = useQueryClient();
 
-  const [filter, setFilter] = useState<Filter>("all");
-  const [createForm, setCreateForm] = useState<TaskInput>(emptyForm);
+  const [tab, setTab] = useState<Tab>("all");
+  const [newTask, setNewTask] = useState<TaskForm>(blank);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<TaskInput>(emptyForm);
+  const [editDraft, setEditDraft] = useState<TaskForm>(blank);
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [newErr, setNewErr] = useState<string | null>(null);
+  const [editErr, setEditErr] = useState<string | null>(null);
+  const [listErr, setListErr] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
 
-  const tasksQuery = useQuery({
+  const q = useQuery({
     queryKey: ["tasks"],
     queryFn: () => api.get<Task[]>("/api/tasks")
   });
 
-  function refreshTasks(updated?: Task) {
-    if (updated) {
-      queryClient.setQueryData<Task[]>(["tasks"], (current) => {
-        const list = current ?? [];
-        const exists = list.some((t) => t.id === updated.id);
-        if (exists) {
-          return list.map((t) => (t.id === updated.id ? updated : t));
-        }
-        return [updated, ...list];
-      });
-      return;
-    }
-    queryClient.invalidateQueries({ queryKey: ["tasks"] });
+  function upsertTask(updated: Task) {
+    qc.setQueryData<Task[]>(["tasks"], (list) => {
+      const items = list ?? [];
+      if (items.some((t) => t.id === updated.id)) {
+        return items.map((t) => (t.id === updated.id ? updated : t));
+      }
+      return [updated, ...items];
+    });
   }
 
-  const createTask = useMutation({
-    mutationFn: (input: TaskInput) =>
+  function fitsFilter(task: Task, current: Tab) {
+    if (current === "active") return !task.isCompleted;
+    if (current === "completed") return task.isCompleted;
+    return true;
+  }
+
+  function bailEdit(task: Task) {
+    if (editingId === task.id && !fitsFilter(task, tab)) {
+      closeEdit();
+    }
+  }
+
+  const create = useMutation({
+    mutationFn: (form: TaskForm) =>
       api.post<Task>("/api/tasks", {
-        title: input.title,
-        description: input.description || null,
-        dueDate: input.dueDate ? new Date(input.dueDate).toISOString() : null
+        title: form.title,
+        description: form.description || null,
+        dueDate: toApiDate(form.dueDate)
       }),
     onSuccess: (task) => {
-      refreshTasks(task);
-      setCreateForm(emptyForm);
-      setFormError(null);
+      upsertTask(task);
+      setNewTask(blank);
+      setNewErr(null);
     },
-    onError: (err) => setFormError(err instanceof Error ? err.message : "Could not create task.")
+    onError: (err) => setNewErr(err instanceof Error ? err.message : "Could not create task.")
   });
 
-  const updateTask = useMutation({
-    mutationFn: ({ id, input }: { id: number; input: TaskInput }) =>
+  const save = useMutation({
+    mutationFn: ({ id, form }: { id: number; form: TaskForm }) =>
       api.patch<Task>(`/api/tasks/${id}`, {
-        title: input.title,
-        description: input.description || null,
-        dueDate: input.dueDate ? new Date(input.dueDate).toISOString() : null,
+        title: form.title,
+        description: form.description || null,
+        dueDate: toApiDate(form.dueDate),
         dueDateChanged: true
       }),
     onSuccess: (task) => {
-      refreshTasks(task);
-      setEditingId(null);
-      setFormError(null);
+      upsertTask(task);
+      closeEdit();
     },
-    onError: (err) => setFormError(err instanceof Error ? err.message : "Could not update task.")
+    onError: (err) => setEditErr(err instanceof Error ? err.message : "Could not save changes.")
   });
 
-  const toggleTask = useMutation({
-    mutationFn: (id: number) => api.patch<Task>(`/api/tasks/${id}/toggle`),
-    onSuccess: (task) => refreshTasks(task),
-    onError: (err) => setFormError(err instanceof Error ? err.message : "Could not update task.")
+  const toggle = useMutation({
+    mutationFn: (id: number) => {
+      setTogglingId(id);
+      return api.patch<Task>(`/api/tasks/${id}/toggle`);
+    },
+    onSuccess: (task) => {
+      upsertTask(task);
+      bailEdit(task);
+      setListErr(null);
+    },
+    onError: (err) =>
+      setListErr(err instanceof Error ? err.message : "Could not update task status."),
+    onSettled: () => setTogglingId(null)
   });
 
-  const deleteTask = useMutation({
+  const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/tasks/${id}`),
     onSuccess: (_, id) => {
-      queryClient.setQueryData<Task[]>(["tasks"], (current) =>
-        (current ?? []).filter((t) => t.id !== id)
-      );
+      qc.setQueryData<Task[]>(["tasks"], (list) => (list ?? []).filter((t) => t.id !== id));
+      if (editingId === id) closeEdit();
       setDeleteId(null);
-      setFormError(null);
+      setListErr(null);
     },
-    onError: (err) => setFormError(err instanceof Error ? err.message : "Could not delete task.")
+    onError: (err) => setListErr(err instanceof Error ? err.message : "Could not delete task.")
   });
 
-  const tasks = tasksQuery.data ?? [];
+  const tasks = q.data ?? [];
 
-  const filteredTasks = useMemo(() => {
-    if (filter === "active") return tasks.filter((t) => !t.isCompleted);
-    if (filter === "completed") return tasks.filter((t) => t.isCompleted);
-    return tasks;
-  }, [tasks, filter]);
+  const counts = useMemo(
+    () => ({
+      all: tasks.length,
+      active: tasks.filter((t) => !t.isCompleted).length,
+      completed: tasks.filter((t) => t.isCompleted).length
+    }),
+    [tasks]
+  );
 
-  const stats = useMemo(() => {
+  const visible = useMemo(() => {
+    let list = tasks;
+    if (tab === "active") list = tasks.filter((t) => !t.isCompleted);
+    if (tab === "completed") list = tasks.filter((t) => t.isCompleted);
+
+    return [...list].sort((a, b) => {
+      const aLate = isLate(a) ? 0 : 1;
+      const bLate = isLate(b) ? 0 : 1;
+      if (aLate !== bLate) return aLate - bLate;
+
+      const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+      const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+      if (aDue !== bDue) return aDue - bDue;
+
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [tasks, tab]);
+
+  const totals = useMemo(() => {
     const active = tasks.filter((t) => !t.isCompleted).length;
     const completed = tasks.filter((t) => t.isCompleted).length;
-    const overdue = tasks.filter((t) => isOverdue(t)).length;
-    return { active, completed, overdue, total: tasks.length };
+    const late = tasks.filter((t) => isLate(t)).length;
+    return { active, completed, late, total: tasks.length };
   }, [tasks]);
 
-  function startEdit(task: Task) {
+  function openEdit(task: Task) {
     setEditingId(task.id);
-    setEditForm({
+    setEditDraft({
       title: task.title,
       description: task.description ?? "",
-      dueDate: toDateInputValue(task.dueDate)
+      dueDate: toInputDate(task.dueDate)
     });
-    setFormError(null);
+    setEditErr(null);
+    setListErr(null);
   }
 
-  function onCreateSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!createForm.title.trim()) {
-      setFormError("Title is required.");
+  function closeEdit() {
+    setEditingId(null);
+    setEditErr(null);
+  }
+
+  function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    if (!newTask.title.trim()) {
+      setNewErr("Title is required.");
       return;
     }
-    createTask.mutate({
-      title: createForm.title.trim(),
-      description: createForm.description.trim(),
-      dueDate: createForm.dueDate
+    setNewErr(null);
+    create.mutate({
+      title: newTask.title.trim(),
+      description: newTask.description.trim(),
+      dueDate: newTask.dueDate
     });
   }
 
-  function onEditSubmit(event: FormEvent) {
-    event.preventDefault();
+  function handleSave(e: FormEvent) {
+    e.preventDefault();
     if (!editingId) return;
-    if (!editForm.title.trim()) {
-      setFormError("Title is required.");
+    if (!editDraft.title.trim()) {
+      setEditErr("Title is required.");
       return;
     }
-    updateTask.mutate({
+    setEditErr(null);
+    save.mutate({
       id: editingId,
-      input: {
-        title: editForm.title.trim(),
-        description: editForm.description.trim(),
-        dueDate: editForm.dueDate
+      form: {
+        title: editDraft.title.trim(),
+        description: editDraft.description.trim(),
+        dueDate: editDraft.dueDate
       }
     });
   }
 
-  const isBusy =
-    createTask.isPending || updateTask.isPending || toggleTask.isPending || deleteTask.isPending;
+  const firstLoad = q.isLoading && !q.data;
+  const refetching = q.isFetching && !firstLoad;
 
   return (
     <section className="rounded-lg bg-white p-6 shadow-sm">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Tasks</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {stats.active} active · {stats.completed} completed
-          {stats.overdue > 0 && (
-            <span className="ml-2 text-red-600">{stats.overdue} overdue</span>
-          )}
-        </p>
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Tasks</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {totals.active} active · {totals.completed} completed
+            {totals.late > 0 && (
+              <span className="ml-2 font-medium text-red-600">{totals.late} overdue</span>
+            )}
+          </p>
+        </div>
+        {refetching && (
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+            Refreshing...
+          </span>
+        )}
       </header>
 
-      {/* create */}
-      <form onSubmit={onCreateSubmit} className="mb-6 space-y-3 rounded-md border border-slate-200 p-4">
+      <form
+        onSubmit={handleCreate}
+        className="mb-6 space-y-3 rounded-md border border-slate-200 p-4"
+      >
         <p className="text-sm font-medium text-slate-800">New task</p>
         <input
-          value={createForm.title}
-          onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))}
+          value={newTask.title}
+          onChange={(e) => setNewTask((f) => ({ ...f, title: e.target.value }))}
           placeholder="Title"
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
         <textarea
-          value={createForm.description}
-          onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))}
+          value={newTask.description}
+          onChange={(e) => setNewTask((f) => ({ ...f, description: e.target.value }))}
           placeholder="Description (optional)"
           rows={2}
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -183,173 +239,234 @@ export default function TasksPage() {
             Due date{" "}
             <input
               type="date"
-              value={createForm.dueDate}
-              onChange={(e) => setCreateForm((f) => ({ ...f, dueDate: e.target.value }))}
+              value={newTask.dueDate}
+              onChange={(e) => setNewTask((f) => ({ ...f, dueDate: e.target.value }))}
               className="ml-2 rounded-md border border-slate-300 px-2 py-1 text-sm"
             />
           </label>
+          {newTask.dueDate && (
+            <button
+              type="button"
+              onClick={() => setNewTask((f) => ({ ...f, dueDate: "" }))}
+              className="text-xs text-slate-500 hover:text-slate-800"
+            >
+              Clear date
+            </button>
+          )}
           <button
             type="submit"
-            disabled={createTask.isPending}
+            disabled={create.isPending}
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
           >
-            {createTask.isPending ? "Adding..." : "Add task"}
+            {create.isPending ? "Adding..." : "Add task"}
           </button>
         </div>
+        {newErr && <p className="text-sm text-red-600">{newErr}</p>}
       </form>
 
-      {/* filters */}
-      <div className="mb-4 flex gap-2">
-        {(["all", "active", "completed"] as Filter[]).map((value) => (
+      <div className="mb-4 flex flex-wrap gap-2">
+        {(["all", "active", "completed"] as Tab[]).map((value) => (
           <button
             key={value}
             type="button"
-            onClick={() => setFilter(value)}
+            onClick={() => {
+              setTab(value);
+              if (editingId) {
+                const row = tasks.find((t) => t.id === editingId);
+                if (row && !fitsFilter(row, value)) closeEdit();
+              }
+            }}
             className={`rounded-full px-3 py-1 text-sm capitalize ${
-              filter === value
+              tab === value
                 ? "bg-slate-900 text-white"
                 : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
           >
-            {value}
+            {value} ({counts[value]})
           </button>
         ))}
       </div>
 
-      {formError && (
-        <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{formError}</p>
+      {listErr && (
+        <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{listErr}</p>
       )}
 
-      {/* list states */}
-      {tasksQuery.isLoading ? (
-        <div className="space-y-2">
-          <div className="h-14 animate-pulse rounded-md bg-slate-100" />
-          <div className="h-14 animate-pulse rounded-md bg-slate-100" />
-          <div className="h-14 animate-pulse rounded-md bg-slate-100" />
-        </div>
-      ) : tasksQuery.isError ? (
-        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          Could not load tasks.{" "}
-          <button
-            type="button"
-            onClick={() => tasksQuery.refetch()}
-            className="font-medium underline"
-          >
-            Try again
-          </button>
-        </div>
+      {firstLoad ? (
+        <LoadingList />
+      ) : q.isError ? (
+        <EmptyBox
+          title="Couldn't load tasks"
+          hint={
+            q.error instanceof Error
+              ? q.error.message
+              : "Something went wrong. Check that the API is running."
+          }
+          btn="Try again"
+          onBtn={() => q.refetch()}
+        />
       ) : tasks.length === 0 ? (
-        <div className="rounded-md border border-dashed border-slate-300 p-8 text-center">
-          <p className="text-sm font-medium text-slate-800">No tasks yet</p>
-          <p className="mt-1 text-sm text-slate-500">Add your first task above to get started.</p>
-        </div>
-      ) : filteredTasks.length === 0 ? (
-        <div className="rounded-md border border-dashed border-slate-300 p-6 text-center text-sm text-slate-600">
-          No {filter} tasks right now.
-        </div>
+        <EmptyBox
+          title="No tasks yet"
+          hint="Create your first task using the form above."
+          icon="📋"
+        />
+      ) : visible.length === 0 ? (
+        <EmptyBox
+          title={`No ${tab} tasks`}
+          hint={
+            tab === "active"
+              ? "Everything is done — nice work. Switch to Completed to review."
+              : tab === "completed"
+                ? "Complete a task to see it here."
+                : "Try a different filter."
+          }
+          btn={tab !== "all" ? "Show all tasks" : undefined}
+          onBtn={tab !== "all" ? () => setTab("all") : undefined}
+        />
       ) : (
-        <ul className="space-y-2">
-          {filteredTasks.map((task) => (
-            <li
-              key={task.id}
-              className={`rounded-md border px-3 py-3 ${
-                isOverdue(task) ? "border-red-200 bg-red-50/40" : "border-slate-200"
-              }`}
-            >
-              {editingId === task.id ? (
-                <form onSubmit={onEditSubmit} className="space-y-3">
-                  <input
-                    value={editForm.title}
-                    onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  />
-                  <textarea
-                    value={editForm.description}
-                    onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                    rows={2}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  />
-                  <input
-                    type="date"
-                    value={editForm.dueDate}
-                    onChange={(e) => setEditForm((f) => ({ ...f, dueDate: e.target.value }))}
-                    className="rounded-md border border-slate-300 px-2 py-1 text-sm"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="submit"
-                      disabled={updateTask.isPending}
-                      className="rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-60"
-                    >
-                      {updateTask.isPending ? "Saving..." : "Save"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(null)}
-                      className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <div className="flex items-start justify-between gap-3">
-                  <label className="flex flex-1 cursor-pointer items-start gap-3">
+        <ul className={`space-y-2 ${refetching ? "opacity-70" : ""}`}>
+          {visible.map((task) => {
+            const status = statusOf(task);
+            const busy = togglingId === task.id;
+
+            return (
+              <li
+                key={task.id}
+                className={`rounded-md border px-3 py-3 transition-opacity ${
+                  status === "overdue"
+                    ? "border-red-200 bg-red-50/50"
+                    : status === "due-today"
+                      ? "border-amber-200 bg-amber-50/40"
+                      : "border-slate-200"
+                } ${busy ? "opacity-60" : ""}`}
+              >
+                {editingId === task.id ? (
+                  <form onSubmit={handleSave} className="space-y-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Editing
+                    </p>
                     <input
-                      type="checkbox"
-                      checked={task.isCompleted}
-                      disabled={isBusy}
-                      onChange={() => toggleTask.mutate(task.id)}
-                      className="mt-1 h-4 w-4"
+                      value={editDraft.title}
+                      onChange={(e) => setEditDraft((f) => ({ ...f, title: e.target.value }))}
+                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      autoFocus
                     />
-                    <div>
-                      <p
-                        className={`text-sm font-medium ${
-                          task.isCompleted ? "text-slate-400 line-through" : "text-slate-900"
-                        }`}
-                      >
-                        {task.title}
-                      </p>
-                      {task.description && (
-                        <p className="mt-1 text-sm text-slate-600">{task.description}</p>
-                      )}
-                      {task.dueDate && (
-                        <p
-                          className={`mt-1 text-xs ${
-                            isOverdue(task) ? "font-medium text-red-600" : "text-slate-500"
-                          }`}
+                    <textarea
+                      value={editDraft.description}
+                      onChange={(e) =>
+                        setEditDraft((f) => ({ ...f, description: e.target.value }))
+                      }
+                      rows={2}
+                      placeholder="Description"
+                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="date"
+                        value={editDraft.dueDate}
+                        onChange={(e) =>
+                          setEditDraft((f) => ({ ...f, dueDate: e.target.value }))
+                        }
+                        className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                      />
+                      {editDraft.dueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEditDraft((f) => ({ ...f, dueDate: "" }))}
+                          className="text-xs text-slate-500 hover:text-slate-800"
                         >
-                          Due {formatDueDate(task.dueDate)}
-                          {isOverdue(task) && " · Overdue"}
-                        </p>
+                          Clear date
+                        </button>
                       )}
                     </div>
-                  </label>
+                    {editErr && <p className="text-sm text-red-600">{editErr}</p>}
+                    <div className="flex gap-2">
+                      <button
+                        type="submit"
+                        disabled={save.isPending}
+                        className="rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-60"
+                      >
+                        {save.isPending ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeEdit}
+                        disabled={save.isPending}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-start justify-between gap-3">
+                    <label className="flex flex-1 cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={task.isCompleted}
+                        disabled={busy || save.isPending}
+                        onChange={() => toggle.mutate(task.id)}
+                        className="mt-1 h-4 w-4"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p
+                            className={`text-sm font-medium ${
+                              task.isCompleted
+                                ? "text-slate-400 line-through"
+                                : "text-slate-900"
+                            }`}
+                          >
+                            {task.title}
+                          </p>
+                          <Tag status={status} />
+                        </div>
+                        {task.description && (
+                          <p className="mt-1 text-sm text-slate-600">{task.description}</p>
+                        )}
+                        {task.dueDate && (
+                          <p
+                            className={`mt-1 text-xs ${
+                              status === "overdue"
+                                ? "font-medium text-red-600"
+                                : status === "due-today"
+                                  ? "font-medium text-amber-700"
+                                  : "text-slate-500"
+                            }`}
+                          >
+                            Due {fmtDate(task.dueDate)}
+                          </p>
+                        )}
+                        {busy && <p className="mt-1 text-xs text-slate-500">Updating...</p>}
+                      </div>
+                    </label>
 
-                  <div className="flex shrink-0 gap-2 text-sm">
-                    <button
-                      type="button"
-                      onClick={() => startEdit(task)}
-                      className="text-slate-600 hover:text-slate-900"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteId(task.id)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      Delete
-                    </button>
+                    <div className="flex shrink-0 gap-2 text-sm">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(task)}
+                        disabled={busy}
+                        className="text-slate-600 hover:text-slate-900 disabled:opacity-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteId(task.id)}
+                        disabled={busy}
+                        className="text-red-600 hover:text-red-700 disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </li>
-          ))}
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
-      {/* delete confirm */}
       {deleteId !== null && (
         <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg">
@@ -365,11 +482,11 @@ export default function TasksPage() {
               </button>
               <button
                 type="button"
-                disabled={deleteTask.isPending}
-                onClick={() => deleteTask.mutate(deleteId)}
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(deleteId)}
                 className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
               >
-                {deleteTask.isPending ? "Deleting..." : "Delete"}
+                {remove.isPending ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>
@@ -379,7 +496,88 @@ export default function TasksPage() {
   );
 }
 
-function formatDueDate(value: string) {
+function LoadingList() {
+  return (
+    <div className="space-y-2" aria-busy="true" aria-label="Loading tasks">
+      {[1, 2, 3, 4].map((n) => (
+        <div key={n} className="animate-pulse rounded-md border border-slate-200 p-4">
+          <div className="flex gap-3">
+            <div className="h-4 w-4 rounded bg-slate-200" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-2/3 rounded bg-slate-200" />
+              <div className="h-3 w-1/2 rounded bg-slate-100" />
+            </div>
+          </div>
+        </div>
+      ))}
+      <p className="text-center text-xs text-slate-500">Loading your tasks...</p>
+    </div>
+  );
+}
+
+function EmptyBox({
+  title,
+  hint,
+  icon,
+  btn,
+  onBtn
+}: {
+  title: string;
+  hint: string;
+  icon?: string;
+  btn?: string;
+  onBtn?: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-dashed border-slate-300 bg-slate-50/50 px-6 py-10 text-center">
+      {icon && <p className="text-2xl">{icon}</p>}
+      <p className="mt-2 text-sm font-medium text-slate-800">{title}</p>
+      <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">{hint}</p>
+      {btn && onBtn && (
+        <button
+          type="button"
+          onClick={onBtn}
+          className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+        >
+          {btn}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Tag({ status }: { status: Status }) {
+  if (status === "active") return null;
+
+  const cls: Record<Exclude<Status, "active">, string> = {
+    completed: "bg-slate-100 text-slate-600",
+    overdue: "bg-red-100 text-red-700",
+    "due-today": "bg-amber-100 text-amber-800"
+  };
+
+  const text: Record<Exclude<Status, "active">, string> = {
+    completed: "Done",
+    overdue: "Overdue",
+    "due-today": "Due today"
+  };
+
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls[status as Exclude<Status, "active">]}`}
+    >
+      {text[status as Exclude<Status, "active">]}
+    </span>
+  );
+}
+
+function statusOf(task: Task): Status {
+  if (task.isCompleted) return "completed";
+  if (isLate(task)) return "overdue";
+  if (isToday(task)) return "due-today";
+  return "active";
+}
+
+function fmtDate(value: string) {
   return new Date(value).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -387,20 +585,32 @@ function formatDueDate(value: string) {
   });
 }
 
-function toDateInputValue(value?: string | null) {
+function toInputDate(value?: string | null) {
   if (!value) return "";
-  const date = new Date(value);
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  const d = new Date(value);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-function isOverdue(task: Task) {
+function toApiDate(dateStr: string) {
+  if (!dateStr) return null;
+  return new Date(`${dateStr}T12:00:00`).toISOString();
+}
+
+function atMidnight(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function isLate(task: Task) {
   if (!task.dueDate || task.isCompleted) return false;
-  const due = new Date(task.dueDate);
-  const today = new Date();
-  due.setHours(0, 0, 0, 0);
-  today.setHours(0, 0, 0, 0);
-  return due < today;
+  return atMidnight(new Date(task.dueDate)) < atMidnight(new Date());
+}
+
+function isToday(task: Task) {
+  if (!task.dueDate || task.isCompleted) return false;
+  return atMidnight(new Date(task.dueDate)).getTime() === atMidnight(new Date()).getTime();
 }
