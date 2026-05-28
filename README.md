@@ -40,6 +40,16 @@ Use environment variables directly, or copy from `.env.example` into your own en
 
 Task routes require a valid JWT. Password hashes are never returned in API responses.
 
+### Backend tests
+
+From `backend/tests/Taskflow.Api.Tests`:
+
+```bash
+dotnet test
+```
+
+Integration tests cover auth validation, unauthorized access, task ownership, and input validation.
+
 ## Run Frontend
 
 1. Install Node.js 18+
