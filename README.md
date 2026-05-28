@@ -58,6 +58,14 @@ Copy `frontend/.env.example` to `frontend/.env` and adjust if needed:
 
 - `VITE_API_BASE_URL` (example: `http://localhost:5068`)
 
+### Frontend structure
+
+- `src/lib/config.ts` — env-based app config
+- `src/api/client.ts` — fetch wrapper + auth token helpers
+- `src/layout/AppLayout.tsx` — shared shell (header + outlet)
+- `src/pages/*` — route pages
+- React Router for routing, TanStack Query for server state
+
 ## Notes
 
 - No repository pattern
