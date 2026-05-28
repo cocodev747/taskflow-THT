@@ -1,24 +1,17 @@
 import { FormEvent, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, getToken } from "../api/client";
+import { api } from "../api/client";
 import type { Task } from "../api/types";
 
 export default function TasksPage() {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const hasToken = Boolean(getToken());
 
   const tasksQuery = useQuery({
     queryKey: ["tasks"],
-    queryFn: () => api.get<Task[]>("/api/tasks"),
-    enabled: hasToken
+    queryFn: () => api.get<Task[]>("/api/tasks")
   });
-
-  if (!hasToken) {
-    return <Navigate to="/login" replace />;
-  }
 
   const createTask = useMutation({
     mutationFn: (newTitle: string) => api.post<Task>("/api/tasks", { title: newTitle }),

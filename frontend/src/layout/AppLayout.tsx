@@ -1,22 +1,12 @@
 import { Link, Outlet, useNavigate } from "react-router-dom";
-import { clearToken, getToken } from "../api/client";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "../api/client";
-import type { User } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 
 export default function AppLayout() {
   const navigate = useNavigate();
-  const hasToken = Boolean(getToken());
+  const { user, logout } = useAuth();
 
-  const { data: user } = useQuery({
-    queryKey: ["me"],
-    queryFn: () => api.get<User>("/api/auth/me"),
-    enabled: hasToken,
-    retry: false
-  });
-
-  function logout() {
-    clearToken();
+  function onLogout() {
+    logout();
     navigate("/login");
   }
 
@@ -28,24 +18,31 @@ export default function AppLayout() {
             Taskflow
           </Link>
           <nav className="flex items-center gap-4 text-sm">
-            <Link to="/tasks" className="text-slate-700 hover:text-slate-900">
-              Tasks
-            </Link>
+            {user && (
+              <Link to="/tasks" className="text-slate-700 hover:text-slate-900">
+                Tasks
+              </Link>
+            )}
             {user ? (
               <>
                 <span className="text-slate-500">{user.email}</span>
                 <button
                   type="button"
-                  onClick={logout}
+                  onClick={onLogout}
                   className="rounded-md border border-slate-300 px-3 py-1 text-slate-700 hover:bg-slate-50"
                 >
                   Logout
                 </button>
               </>
             ) : (
-              <Link to="/login" className="text-slate-700 hover:text-slate-900">
-                Login
-              </Link>
+              <>
+                <Link to="/login" className="text-slate-700 hover:text-slate-900">
+                  Login
+                </Link>
+                <Link to="/register" className="text-slate-700 hover:text-slate-900">
+                  Register
+                </Link>
+              </>
             )}
           </nav>
         </div>
