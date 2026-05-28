@@ -1,8 +1,12 @@
 import { Link } from "react-router-dom";
-import { getToken } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 
 export default function HomePage() {
-  const isLoggedIn = Boolean(getToken());
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <p className="text-sm text-slate-600">Loading...</p>;
+  }
 
   return (
     <section className="rounded-lg bg-white p-6 shadow-sm">
@@ -12,11 +16,19 @@ export default function HomePage() {
       </p>
       <div className="mt-6 flex gap-3">
         <Link
-          to={isLoggedIn ? "/tasks" : "/login"}
+          to={user ? "/tasks" : "/login"}
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
         >
-          {isLoggedIn ? "Go to tasks" : "Sign in"}
+          {user ? "Go to tasks" : "Sign in"}
         </Link>
+        {!user && (
+          <Link
+            to="/register"
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Register
+          </Link>
+        )}
       </div>
     </section>
   );

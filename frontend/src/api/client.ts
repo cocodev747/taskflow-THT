@@ -1,3 +1,4 @@
+import { clearAuth, getToken, notifyAuthLogout } from "../lib/authStorage";
 import { config } from "../lib/config";
 
 type ApiError = {
@@ -5,7 +6,7 @@ type ApiError = {
 };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem(config.tokenKey);
+  const token = getToken();
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
 
@@ -17,6 +18,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options,
     headers
   });
+
+  if (response.status === 401 && token) {
+    clearAuth();
+    notifyAuthLogout();
+    throw new Error("Session expired. Please sign in again.");
+  }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as ApiError | null;
@@ -41,15 +48,3 @@ export const api = {
     }),
   delete: (path: string) => request<void>(path, { method: "DELETE" })
 };
-
-export function getToken() {
-  return localStorage.getItem(config.tokenKey);
-}
-
-export function setToken(token: string) {
-  localStorage.setItem(config.tokenKey, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(config.tokenKey);
-}
