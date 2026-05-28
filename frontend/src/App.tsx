@@ -6,11 +6,13 @@ import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import TasksPage from "./pages/TasksPage";
+import { SessionToast } from "./ui/Toast";
 
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <SessionToast />
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/" element={<HomePage />} />

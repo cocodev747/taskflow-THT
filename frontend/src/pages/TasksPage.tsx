@@ -2,9 +2,19 @@ import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Task } from "../api/types";
+import { errMsg } from "../lib/apiError";
+import {
+  fmtDate,
+  isLate,
+  statusOf,
+  toApiDate,
+  toInputDate,
+  type TaskStatus
+} from "../lib/dates";
+import Empty from "../ui/Empty";
+import { useToast } from "../ui/Toast";
 
 type Tab = "all" | "active" | "completed";
-type Status = "completed" | "overdue" | "due-today" | "active";
 
 type TaskForm = {
   title: string;
@@ -16,6 +26,7 @@ const blank: TaskForm = { title: "", description: "", dueDate: "" };
 
 export default function TasksPage() {
   const qc = useQueryClient();
+  const toast = useToast();
 
   const [tab, setTab] = useState<Tab>("all");
   const [newTask, setNewTask] = useState<TaskForm>(blank);
@@ -24,7 +35,6 @@ export default function TasksPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [newErr, setNewErr] = useState<string | null>(null);
   const [editErr, setEditErr] = useState<string | null>(null);
-  const [listErr, setListErr] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
 
   const q = useQuery({
@@ -65,8 +75,9 @@ export default function TasksPage() {
       upsertTask(task);
       setNewTask(blank);
       setNewErr(null);
+      toast.ok("Task added");
     },
-    onError: (err) => setNewErr(err instanceof Error ? err.message : "Could not create task.")
+    onError: (e) => toast.err(errMsg(e, "Could not create task."))
   });
 
   const save = useMutation({
@@ -80,8 +91,9 @@ export default function TasksPage() {
     onSuccess: (task) => {
       upsertTask(task);
       closeEdit();
+      toast.ok("Task saved");
     },
-    onError: (err) => setEditErr(err instanceof Error ? err.message : "Could not save changes.")
+    onError: (e) => toast.err(errMsg(e, "Could not save changes."))
   });
 
   const toggle = useMutation({
@@ -92,10 +104,8 @@ export default function TasksPage() {
     onSuccess: (task) => {
       upsertTask(task);
       bailEdit(task);
-      setListErr(null);
     },
-    onError: (err) =>
-      setListErr(err instanceof Error ? err.message : "Could not update task status."),
+    onError: (e) => toast.err(errMsg(e, "Could not update status.")),
     onSettled: () => setTogglingId(null)
   });
 
@@ -105,9 +115,9 @@ export default function TasksPage() {
       qc.setQueryData<Task[]>(["tasks"], (list) => (list ?? []).filter((t) => t.id !== id));
       if (editingId === id) closeEdit();
       setDeleteId(null);
-      setListErr(null);
+      toast.ok("Task deleted");
     },
-    onError: (err) => setListErr(err instanceof Error ? err.message : "Could not delete task.")
+    onError: (e) => toast.err(errMsg(e, "Could not delete task."))
   });
 
   const tasks = q.data ?? [];
@@ -154,7 +164,6 @@ export default function TasksPage() {
       dueDate: toInputDate(task.dueDate)
     });
     setEditErr(null);
-    setListErr(null);
   }
 
   function closeEdit() {
@@ -211,7 +220,7 @@ export default function TasksPage() {
         </div>
         {refetching && (
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-            Refreshing...
+            Syncing...
           </span>
         )}
       </header>
@@ -223,9 +232,14 @@ export default function TasksPage() {
         <p className="text-sm font-medium text-slate-800">New task</p>
         <input
           value={newTask.title}
-          onChange={(e) => setNewTask((f) => ({ ...f, title: e.target.value }))}
+          onChange={(e) => {
+            setNewTask((f) => ({ ...f, title: e.target.value }));
+            if (newErr) setNewErr(null);
+          }}
           placeholder="Title"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className={`w-full rounded-md border px-3 py-2 text-sm ${
+            newErr ? "border-red-300" : "border-slate-300"
+          }`}
         />
         <textarea
           value={newTask.description}
@@ -287,44 +301,37 @@ export default function TasksPage() {
         ))}
       </div>
 
-      {listErr && (
-        <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{listErr}</p>
-      )}
-
       {firstLoad ? (
-        <LoadingList />
+        <ListSkeleton />
       ) : q.isError ? (
-        <EmptyBox
+        <Empty
           title="Couldn't load tasks"
-          hint={
-            q.error instanceof Error
-              ? q.error.message
-              : "Something went wrong. Check that the API is running."
-          }
-          btn="Try again"
+          hint={errMsg(q.error, "Check that the API is running and try again.")}
+          icon="⚠️"
+          btn="Retry"
           onBtn={() => q.refetch()}
         />
       ) : tasks.length === 0 ? (
-        <EmptyBox
+        <Empty
           title="No tasks yet"
-          hint="Create your first task using the form above."
+          hint="Add your first task with the form above — title is all you need to start."
           icon="📋"
         />
       ) : visible.length === 0 ? (
-        <EmptyBox
+        <Empty
           title={`No ${tab} tasks`}
           hint={
             tab === "active"
-              ? "Everything is done — nice work. Switch to Completed to review."
+              ? "You're all caught up. Peek at completed tasks or add something new."
               : tab === "completed"
-                ? "Complete a task to see it here."
-                : "Try a different filter."
+                ? "Finish a task and it'll show up here."
+                : "Nothing matches this filter."
           }
-          btn={tab !== "all" ? "Show all tasks" : undefined}
+          btn={tab !== "all" ? "Show all" : undefined}
           onBtn={tab !== "all" ? () => setTab("all") : undefined}
         />
       ) : (
-        <ul className={`space-y-2 ${refetching ? "opacity-70" : ""}`}>
+        <ul className={`space-y-2 transition-opacity ${refetching ? "opacity-60" : ""}`}>
           {visible.map((task) => {
             const status = statusOf(task);
             const busy = togglingId === task.id;
@@ -332,7 +339,7 @@ export default function TasksPage() {
             return (
               <li
                 key={task.id}
-                className={`rounded-md border px-3 py-3 transition-opacity ${
+                className={`rounded-md border px-3 py-3 ${
                   status === "overdue"
                     ? "border-red-200 bg-red-50/50"
                     : status === "due-today"
@@ -347,8 +354,13 @@ export default function TasksPage() {
                     </p>
                     <input
                       value={editDraft.title}
-                      onChange={(e) => setEditDraft((f) => ({ ...f, title: e.target.value }))}
-                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      onChange={(e) => {
+                        setEditDraft((f) => ({ ...f, title: e.target.value }));
+                        if (editErr) setEditErr(null);
+                      }}
+                      className={`w-full rounded-md border px-3 py-2 text-sm ${
+                        editErr ? "border-red-300" : "border-slate-300"
+                      }`}
                       autoFocus
                     />
                     <textarea
@@ -496,7 +508,7 @@ export default function TasksPage() {
   );
 }
 
-function LoadingList() {
+function ListSkeleton() {
   return (
     <div className="space-y-2" aria-busy="true" aria-label="Loading tasks">
       {[1, 2, 3, 4].map((n) => (
@@ -510,52 +522,21 @@ function LoadingList() {
           </div>
         </div>
       ))}
-      <p className="text-center text-xs text-slate-500">Loading your tasks...</p>
+      <p className="pt-2 text-center text-xs text-slate-500">Loading tasks...</p>
     </div>
   );
 }
 
-function EmptyBox({
-  title,
-  hint,
-  icon,
-  btn,
-  onBtn
-}: {
-  title: string;
-  hint: string;
-  icon?: string;
-  btn?: string;
-  onBtn?: () => void;
-}) {
-  return (
-    <div className="rounded-md border border-dashed border-slate-300 bg-slate-50/50 px-6 py-10 text-center">
-      {icon && <p className="text-2xl">{icon}</p>}
-      <p className="mt-2 text-sm font-medium text-slate-800">{title}</p>
-      <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">{hint}</p>
-      {btn && onBtn && (
-        <button
-          type="button"
-          onClick={onBtn}
-          className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-        >
-          {btn}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function Tag({ status }: { status: Status }) {
+function Tag({ status }: { status: TaskStatus }) {
   if (status === "active") return null;
 
-  const cls: Record<Exclude<Status, "active">, string> = {
+  const cls: Record<Exclude<TaskStatus, "active">, string> = {
     completed: "bg-slate-100 text-slate-600",
     overdue: "bg-red-100 text-red-700",
     "due-today": "bg-amber-100 text-amber-800"
   };
 
-  const text: Record<Exclude<Status, "active">, string> = {
+  const text: Record<Exclude<TaskStatus, "active">, string> = {
     completed: "Done",
     overdue: "Overdue",
     "due-today": "Due today"
@@ -563,54 +544,9 @@ function Tag({ status }: { status: Status }) {
 
   return (
     <span
-      className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls[status as Exclude<Status, "active">]}`}
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls[status as Exclude<TaskStatus, "active">]}`}
     >
-      {text[status as Exclude<Status, "active">]}
+      {text[status as Exclude<TaskStatus, "active">]}
     </span>
   );
-}
-
-function statusOf(task: Task): Status {
-  if (task.isCompleted) return "completed";
-  if (isLate(task)) return "overdue";
-  if (isToday(task)) return "due-today";
-  return "active";
-}
-
-function fmtDate(value: string) {
-  return new Date(value).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric"
-  });
-}
-
-function toInputDate(value?: string | null) {
-  if (!value) return "";
-  const d = new Date(value);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function toApiDate(dateStr: string) {
-  if (!dateStr) return null;
-  return new Date(`${dateStr}T12:00:00`).toISOString();
-}
-
-function atMidnight(date: Date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function isLate(task: Task) {
-  if (!task.dueDate || task.isCompleted) return false;
-  return atMidnight(new Date(task.dueDate)) < atMidnight(new Date());
-}
-
-function isToday(task: Task) {
-  if (!task.dueDate || task.isCompleted) return false;
-  return atMidnight(new Date(task.dueDate)).getTime() === atMidnight(new Date()).getTime();
 }

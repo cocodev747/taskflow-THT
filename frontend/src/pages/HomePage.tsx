@@ -1,11 +1,16 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import Spinner from "../ui/Spinner";
 
 export default function HomePage() {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <p className="text-sm text-slate-600">Loading...</p>;
+    return (
+      <section className="rounded-lg bg-white p-8 shadow-sm">
+        <Spinner label="Loading..." />
+      </section>
+    );
   }
 
   return (
