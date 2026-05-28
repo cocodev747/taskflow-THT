@@ -12,8 +12,7 @@ namespace Taskflow.Api.Controllers;
 [Route("api/tasks")]
 public class TasksController(ApplicationDbContext db) : ControllerBase
 {
-    private int CurrentUserId =>
-        int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+    private int CurrentUserId => int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TaskItem>>> GetAll()
@@ -29,16 +28,32 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TaskItem>> Create([FromBody] CreateTaskRequest request)
     {
+        if (request is null)
+        {
+            return BadRequest(new { message = "Request body is required." });
+        }
+
         var title = request.Title.Trim();
         if (string.IsNullOrWhiteSpace(title))
         {
             return BadRequest(new { message = "Title is required." });
         }
+        
+        if (title.Length > 200)
+        {
+            return BadRequest(new { message = "Title must be 200 characters or fewer." });
+        }
+
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        if (description is not null && description.Length > 1000)
+        {
+            return BadRequest(new { message = "Description must be 1000 characters or fewer." });
+        }
 
         var item = new TaskItem
         {
             Title = title,
-            Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+            Description = description,
             DueDate = request.DueDate,
             IsCompleted = false,
             UserId = CurrentUserId
@@ -53,6 +68,11 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<ActionResult<TaskItem>> GetById(int id)
     {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
         var item = await FindOwnedTask(id);
         return item is null ? NotFound() : Ok(item);
     }
@@ -60,22 +80,45 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpPatch("{id:int}")]
     public async Task<ActionResult<TaskItem>> Update(int id, [FromBody] UpdateTaskRequest request)
     {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
         var item = await FindOwnedTask(id);
         if (item is null)
         {
-            return NotFound();
+            return NotFound(new { message = "Task not found." });
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Title))
+        if (request.Title is not null)
         {
-            item.Title = request.Title.Trim();
+            var nextTitle = request.Title.Trim();
+            if (string.IsNullOrWhiteSpace(nextTitle))
+            {
+                return BadRequest(new { message = "Title cannot be empty." });
+            }
+
+            if (nextTitle.Length > 200)
+            {
+                return BadRequest(new { message = "Title must be 200 characters or fewer." });
+            }
+
+            item.Title = nextTitle;
         }
 
         if (request.Description is not null)
         {
-            item.Description = string.IsNullOrWhiteSpace(request.Description)
+            var nextDescription = string.IsNullOrWhiteSpace(request.Description)
                 ? null
                 : request.Description.Trim();
+
+            if (nextDescription is not null && nextDescription.Length > 1000)
+            {
+                return BadRequest(new { message = "Description must be 1000 characters or fewer." });
+            }
+
+            item.Description = nextDescription;
         }
 
         if (request.DueDateChanged)
@@ -93,13 +136,44 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
         return Ok(item);
     }
 
-    [HttpDelete("{id:int}")]
-    public async Task<IActionResult> Delete(int id)
+    [HttpPatch("{id:int}/toggle")]
+    public async Task<ActionResult<TaskItem>> ToggleCompletion(int id)
     {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
         var item = await FindOwnedTask(id);
         if (item is null)
         {
-            return NotFound();
+            return NotFound(new { message = "Task not found." });
+        }
+
+        // Explicit ownership check kept for review readability.
+        if (item.UserId != CurrentUserId)
+        {
+            return Forbid();
+        }
+
+        item.IsCompleted = !item.IsCompleted;
+        item.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(item);
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        if (id <= 0)
+        {
+            return BadRequest(new { message = "Task id must be greater than 0." });
+        }
+
+        var item = await FindOwnedTask(id);
+        if (item is null)
+        {
+            return NotFound(new { message = "Task not found." });
         }
 
         db.Tasks.Remove(item);
