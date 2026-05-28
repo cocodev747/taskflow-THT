@@ -30,6 +30,15 @@ Use environment variables directly, or copy from `.env.example` into your own en
 
 - `TASKFLOW_CONNECTION_STRING` (example: `Data Source=taskflow.db`)
 - `TASKFLOW_ALLOWED_ORIGINS` (comma-separated, example: `http://localhost:5173`)
+- `TASKFLOW_JWT_KEY` (at least 32 characters for production)
+
+### Auth endpoints
+
+- `POST /api/auth/register` — create account, returns JWT
+- `POST /api/auth/login` — sign in, returns JWT
+- `GET /api/auth/me` — current user (requires `Authorization: Bearer <token>`)
+
+Task routes require a valid JWT. Password hashes are never returned in API responses.
 
 ## Run Frontend
 

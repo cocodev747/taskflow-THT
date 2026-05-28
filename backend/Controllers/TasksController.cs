@@ -1,18 +1,26 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using Taskflow.Api.Data;
 using Taskflow.Api.Models;
 
 namespace Taskflow.Api.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/tasks")]
 public class TasksController(ApplicationDbContext db) : ControllerBase
 {
+    private int CurrentUserId =>
+        int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TaskItem>>> GetAll()
     {
+        var userId = CurrentUserId;
         var items = await db.Tasks
+            .Where(t => t.UserId == userId)
             .OrderByDescending(t => t.CreatedAt)
             .ToListAsync();
         return Ok(items);
@@ -24,18 +32,7 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
         var title = request.Title.Trim();
         if (string.IsNullOrWhiteSpace(title))
         {
-            return BadRequest("Title is required.");
-        }
-
-        if (request.UserId <= 0)
-        {
-            return BadRequest("A valid userId is required.");
-        }
-
-        var userExists = await db.Users.AnyAsync(u => u.Id == request.UserId);
-        if (!userExists)
-        {
-            return BadRequest("User not found.");
+            return BadRequest(new { message = "Title is required." });
         }
 
         var item = new TaskItem
@@ -44,7 +41,7 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
             Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
             DueDate = request.DueDate,
             IsCompleted = false,
-            UserId = request.UserId
+            UserId = CurrentUserId
         };
 
         db.Tasks.Add(item);
@@ -56,14 +53,14 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<ActionResult<TaskItem>> GetById(int id)
     {
-        var item = await db.Tasks.FindAsync(id);
+        var item = await FindOwnedTask(id);
         return item is null ? NotFound() : Ok(item);
     }
 
     [HttpPatch("{id:int}")]
     public async Task<ActionResult<TaskItem>> Update(int id, [FromBody] UpdateTaskRequest request)
     {
-        var item = await db.Tasks.FindAsync(id);
+        var item = await FindOwnedTask(id);
         if (item is null)
         {
             return NotFound();
@@ -99,7 +96,7 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var item = await db.Tasks.FindAsync(id);
+        var item = await FindOwnedTask(id);
         if (item is null)
         {
             return NotFound();
@@ -110,7 +107,13 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
         return NoContent();
     }
 
-    public record CreateTaskRequest(string Title, string? Description, DateTime? DueDate, int UserId);
+    private Task<TaskItem?> FindOwnedTask(int id)
+    {
+        var userId = CurrentUserId;
+        return db.Tasks.FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+    }
+
+    public record CreateTaskRequest(string Title, string? Description, DateTime? DueDate);
     public record UpdateTaskRequest(
         string? Title,
         string? Description,
