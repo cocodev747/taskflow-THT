@@ -1,10 +1,15 @@
-using Microsoft.EntityFrameworkCore;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using Taskflow.Api.Data;
+using Taskflow.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddScoped<JwtService>();
 
 var connectionString =
     builder.Configuration.GetConnectionString("Default")
@@ -12,6 +17,31 @@ var connectionString =
     ?? "Data Source=taskflow.db";
 
 builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseSqlite(connectionString));
+
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? Environment.GetEnvironmentVariable("TASKFLOW_JWT_KEY")
+    ?? "dev-only-change-me-use-at-least-32-characters";
+
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "Taskflow.Api";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "Taskflow.Web";
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 var allowedOriginsRaw =
     builder.Configuration["Cors:AllowedOrigins"]
@@ -36,7 +66,6 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     db.Database.EnsureCreated();
 
-    // if local DB schema is stale, recreate it.
     try
     {
         _ = db.Users.Any();
@@ -46,20 +75,12 @@ using (var scope = app.Services.CreateScope())
         db.Database.EnsureDeleted();
         db.Database.EnsureCreated();
     }
-
-    if (!db.Users.Any())
-    {
-        db.Users.Add(new()
-        {
-            Email = "demo@taskflow.local",
-            PasswordHash = "dev-only-placeholder-hash"
-        });
-        db.SaveChanges();
-    }
 }
 
 app.UseCors("frontend");
 app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
