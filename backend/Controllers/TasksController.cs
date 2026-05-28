@@ -44,10 +44,16 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
             return BadRequest(new { message = "Title must be 200 characters or fewer." });
         }
 
+        var description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+        if (description is not null && description.Length > 1000)
+        {
+            return BadRequest(new { message = "Description must be 1000 characters or fewer." });
+        }
+
         var item = new TaskItem
         {
             Title = title,
-            Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+            Description = description,
             DueDate = request.DueDate,
             IsCompleted = false,
             UserId = CurrentUserId
@@ -82,19 +88,37 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
         var item = await FindOwnedTask(id);
         if (item is null)
         {
-            return NotFound();
+            return NotFound(new { message = "Task not found." });
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Title))
+        if (request.Title is not null)
         {
-            item.Title = request.Title.Trim();
+            var nextTitle = request.Title.Trim();
+            if (string.IsNullOrWhiteSpace(nextTitle))
+            {
+                return BadRequest(new { message = "Title cannot be empty." });
+            }
+
+            if (nextTitle.Length > 200)
+            {
+                return BadRequest(new { message = "Title must be 200 characters or fewer." });
+            }
+
+            item.Title = nextTitle;
         }
 
         if (request.Description is not null)
         {
-            item.Description = string.IsNullOrWhiteSpace(request.Description)
+            var nextDescription = string.IsNullOrWhiteSpace(request.Description)
                 ? null
                 : request.Description.Trim();
+
+            if (nextDescription is not null && nextDescription.Length > 1000)
+            {
+                return BadRequest(new { message = "Description must be 1000 characters or fewer." });
+            }
+
+            item.Description = nextDescription;
         }
 
         if (request.DueDateChanged)
@@ -123,7 +147,7 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
         var item = await FindOwnedTask(id);
         if (item is null)
         {
-            return NotFound();
+            return NotFound(new { message = "Task not found." });
         }
 
         // Explicit ownership check kept for review readability.
@@ -149,7 +173,7 @@ public class TasksController(ApplicationDbContext db) : ControllerBase
         var item = await FindOwnedTask(id);
         if (item is null)
         {
-            return NotFound();
+            return NotFound(new { message = "Task not found." });
         }
 
         db.Tasks.Remove(item);
