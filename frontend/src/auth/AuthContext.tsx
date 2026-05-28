@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, clearToken, getToken, setToken } from "../api/client";
+import { api } from "../api/client";
+import { clearAuth, loadAuth, saveAuth } from "../lib/authStorage";
+import { config } from "../lib/config";
 import type { AuthResult, User } from "../api/types";
 
 type AuthContextValue = {
@@ -19,42 +21,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function loadSession() {
-      if (!getToken()) {
+    async function restoreSession() {
+      const stored = loadAuth();
+      if (!stored) {
         setLoading(false);
         return;
+      }
+
+      if (stored.user) {
+        setUser(stored.user);
       }
 
       try {
         const me = await api.get<User>("/api/auth/me");
         setUser(me);
+        saveAuth(stored.token, me);
       } catch {
-        clearToken();
+        clearAuth();
         setUser(null);
       } finally {
         setLoading(false);
       }
     }
 
-    loadSession();
+    restoreSession();
   }, []);
+
+  useEffect(() => {
+    function onStorage(event: StorageEvent) {
+      if (event.key === config.tokenKey && !event.newValue) {
+        setUser(null);
+        queryClient.clear();
+      }
+    }
+
+    function onAuthLogout() {
+      setUser(null);
+      queryClient.clear();
+    }
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("auth:logout", onAuthLogout);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("auth:logout", onAuthLogout);
+    };
+  }, [queryClient]);
 
   async function login(email: string, password: string) {
     const result = await api.post<AuthResult>("/api/auth/login", { email, password });
-    setToken(result.token);
+    saveAuth(result.token, result.user);
     setUser(result.user);
     queryClient.invalidateQueries();
   }
 
   async function register(email: string, password: string) {
     const result = await api.post<AuthResult>("/api/auth/register", { email, password });
-    setToken(result.token);
+    saveAuth(result.token, result.user);
     setUser(result.user);
     queryClient.invalidateQueries();
   }
 
   function logout() {
-    clearToken();
+    clearAuth();
     setUser(null);
     queryClient.clear();
   }
